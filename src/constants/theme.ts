@@ -1,65 +1,36 @@
-/**
- * Below are the colors that are used in the app. The colors are defined in the light and dark mode.
- * There are many other ways to style your app. For example, [Nativewind](https://www.nativewind.dev/), [Tamagui](https://tamagui.dev/), [unistyles](https://reactnativeunistyles.vercel.app), etc.
- */
+// All the colors, fonts and spacing in one place.
+// Change a value here and the whole app updates.
 
-import '@/global.css';
+export const colors = {
+  night: "#10132B", // app background, the sky before sunrise
+  dusk: "#1A1E40", // raised surfaces (inputs, groups, keys)
+  haze: "#2B3060", // hairlines and inactive controls
+  moon: "#F1EEF8", // main text
+  mist: "#9C9FC4", // secondary text
+  dawn: "#FFB27A", // accent, the sunrise
+  dawnInk: "#2A1608", // text and icons that sit on top of dawn
+  leaf: "#8FE0B5", // success
+  rose: "#FF8A99", // errors and delete
+}
 
-import { Platform } from 'react-native';
+// Sora is used for times, titles and buttons. Body text uses the phone's own font.
+export const fonts = {
+  light: "Sora_300Light",
+  regular: "Sora_400Regular",
+  semibold: "Sora_600SemiBold",
+}
 
-export const Colors = {
-  light: {
-    text: '#000000',
-    background: '#ffffff',
-    backgroundElement: '#F0F0F3',
-    backgroundSelected: '#E0E1E6',
-    textSecondary: '#60646C',
-  },
-  dark: {
-    text: '#ffffff',
-    background: '#000000',
-    backgroundElement: '#212225',
-    backgroundSelected: '#2E3135',
-    textSecondary: '#B0B4BA',
-  },
-} as const;
+export const space = { xs: 4, sm: 8, md: 16, lg: 24, xl: 32 }
 
-export type ThemeColor = keyof typeof Colors.light & keyof typeof Colors.dark;
+export const radius = { sm: 10, md: 16, lg: 22, pill: 999 }
 
-export const Fonts = Platform.select({
-  ios: {
-    /** iOS `UIFontDescriptorSystemDesignDefault` */
-    sans: 'system-ui',
-    /** iOS `UIFontDescriptorSystemDesignSerif` */
-    serif: 'ui-serif',
-    /** iOS `UIFontDescriptorSystemDesignRounded` */
-    rounded: 'ui-rounded',
-    /** iOS `UIFontDescriptorSystemDesignMonospaced` */
-    mono: 'ui-monospace',
-  },
-  default: {
-    sans: 'normal',
-    serif: 'serif',
-    rounded: 'normal',
-    mono: 'monospace',
-  },
-  web: {
-    sans: 'var(--font-display)',
-    serif: 'var(--font-serif)',
-    rounded: 'var(--font-rounded)',
-    mono: 'var(--font-mono)',
-  },
-});
+// The skies behind the hero card and the wake-up screens, from top to horizon.
+export const sky = {
+  night: ["#10132B", "#1A1C44", "#262352"],
+  dawn: ["#10132B", "#23204D", "#4E3460", "#A55E6C"],
+  morning: ["#1A1E4C", "#43316B", "#A7607A", "#EC9C7C"],
+} as const
 
-export const Spacing = {
-  half: 2,
-  one: 4,
-  two: 8,
-  three: 16,
-  four: 24,
-  five: 32,
-  six: 64,
-} as const;
-
-export const BottomTabInset = Platform.select({ ios: 50, android: 80 }) ?? 0;
-export const MaxContentWidth = 800;
+// The far hills and the dark ground the sun rises behind.
+export const hillFar = "#2A2250"
+export const ground = "#0B0D22"

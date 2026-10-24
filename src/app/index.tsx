@@ -1,98 +1,315 @@
-import * as Device from 'expo-device';
-import { Platform, StyleSheet } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { Ionicons } from "@expo/vector-icons"
+import { router } from "expo-router"
+import { Fragment, useEffect, useState } from "react"
+import { ScrollView, StyleSheet, Text, View } from "react-native"
+import { SafeAreaView } from "react-native-safe-area-context"
 
-import { AnimatedIcon } from '@/components/animated-icon';
-import { HintRow } from '@/components/hint-row';
-import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
-import { WebBadge } from '@/components/web-badge';
-import { BottomTabInset, MaxContentWidth, Spacing } from '@/constants/theme';
+import { AlarmRow } from "@/components/alarm-row"
+import { Hills, Moon, SkyGradient, Stars, Sun } from "@/components/sky"
+import { Button, IconButton } from "@/components/ui"
+import { colors, fonts, ground, radius, space } from "@/constants/theme"
+import { IS_PREVIEW } from "@/lib/alarm-service"
+import { useAlarms } from "@/lib/alarms-context"
+import { taskInfo } from "@/lib/tasks"
+import {
+  averageSeconds,
+  currentStreak,
+  describeDays,
+  describeNext,
+  formatDuration,
+  formatLongDate,
+  formatTime,
+  greeting,
+  nextRing,
+} from "@/lib/time"
 
-function getDevMenuHint() {
-  if (Platform.OS === 'web') {
-    return <ThemedText type="small">use browser devtools</ThemedText>;
-  }
-  if (Device.isDevice) {
-    return (
-      <ThemedText type="small">
-        shake device or press <ThemedText type="code">m</ThemedText> in terminal
-      </ThemedText>
-    );
-  }
-  const shortcut = Platform.OS === 'android' ? 'cmd+m (or ctrl+m)' : 'cmd+d';
-  return (
-    <ThemedText type="small">
-      press <ThemedText type="code">{shortcut}</ThemedText>
-    </ThemedText>
-  );
-}
+const SUN = 92
+const GROUND = 46 // the dark strip at the bottom of the sky card
+const HILLS = 40 // how tall the hills above it are
 
 export default function HomeScreen() {
+  const { ready, alarms, records, setEnabled } = useAlarms()
+  const [now, setNow] = useState(() => new Date())
+
+  // Refresh the "Rings in..." text every 30 seconds.
+  useEffect(() => {
+    const timer = setInterval(() => setNow(new Date()), 30_000)
+    return () => clearInterval(timer)
+  }, [])
+
+  const upcoming = alarms
+    .filter((alarm) => alarm.enabled)
+    .map((alarm) => ({ alarm, at: nextRing(alarm, now) }))
+    .sort((a, b) => a.at.getTime() - b.at.getTime())[0]
+
+  const streak = currentStreak(records, now)
+  const average = averageSeconds(records)
+
+  const openEditor = (id: string) => router.push({ pathname: "/alarm/[id]", params: { id } })
+
+  if (!ready) return <View style={styles.screen} />
+
   return (
-    <ThemedView style={styles.container}>
-      <SafeAreaView style={styles.safeArea}>
-        <ThemedView style={styles.heroSection}>
-          <AnimatedIcon />
-          <ThemedText type="title" style={styles.title}>
-            Welcome to&nbsp;Expo
-          </ThemedText>
-        </ThemedView>
+    <SafeAreaView style={styles.screen} edges={["top"]}>
+      <ScrollView contentContainerStyle={styles.content}>
+        <View style={styles.header}>
+          <View>
+            <Text style={styles.date}>{formatLongDate(now)}</Text>
+            <Text style={styles.title}>{greeting(now)}</Text>
+          </View>
+          <IconButton icon="add" label="Add alarm" onPress={() => openEditor("new")} />
+        </View>
 
-        <ThemedText type="code" style={styles.code}>
-          get started
-        </ThemedText>
+        {/* The next alarm as a little sky, with the sun waiting on the horizon */}
+        <View style={styles.hero}>
+          <SkyGradient variant={upcoming ? "dawn" : "night"} />
+          <Stars />
+          {upcoming ? (
+            <View style={styles.heroSun}>
+              <Sun size={SUN} />
+            </View>
+          ) : (
+            <View style={styles.heroMoon}>
+              <Moon size={30} />
+            </View>
+          )}
 
-        <ThemedView type="backgroundElement" style={styles.stepContainer}>
-          <HintRow
-            title="Try editing"
-            hint={<ThemedText type="code">src/app/index.tsx</ThemedText>}
-          />
-          <HintRow title="Dev tools" hint={getDevMenuHint()} />
-          <HintRow
-            title="Fresh start"
-            hint={<ThemedText type="code">npm run reset-project</ThemedText>}
-          />
-        </ThemedView>
+          <View style={styles.heroContent}>
+            {upcoming ? (
+              <>
+                <Text style={styles.heroCaption}>{describeNext(upcoming.at, now)}</Text>
+                <Text style={styles.heroTime}>
+                  {formatTime(upcoming.alarm.hour, upcoming.alarm.minute)}
+                </Text>
+                <Text style={styles.heroDetail}>
+                  {upcoming.alarm.label || describeDays(upcoming.alarm.days)}, then{" "}
+                  {taskInfo(upcoming.alarm.task).title.toLowerCase()}
+                </Text>
+              </>
+            ) : (
+              <>
+                <Text style={styles.heroCaption}>No alarm is on</Text>
+                <Text style={styles.heroFree}>Free morning</Text>
+                <Text style={styles.heroDetail}>
+                  {alarms.length > 0
+                    ? "Turn an alarm on below to get up on time."
+                    : "Tap + to set your first alarm."}
+                </Text>
+              </>
+            )}
+          </View>
 
-        {Platform.OS === 'web' && <WebBadge />}
-      </SafeAreaView>
-    </ThemedView>
-  );
+          <View style={styles.hills}>
+            <Hills height={HILLS} />
+          </View>
+
+          <View style={styles.ground}>
+            {records.length > 0 ? (
+              <>
+                <View style={styles.stat}>
+                  <Ionicons name="flame" size={16} color={colors.dawn} />
+                  <Text style={styles.statText}>
+                    {streak === 1 ? "1 morning in a row" : `${streak} mornings in a row`}
+                  </Text>
+                </View>
+                {average !== null ? (
+                  <View style={styles.stat}>
+                    <Ionicons name="timer-outline" size={16} color={colors.dawn} />
+                    <Text style={styles.statText}>Up in {formatDuration(average)}</Text>
+                  </View>
+                ) : null}
+              </>
+            ) : (
+              <Text style={styles.statText}>Your streak starts with your first wake-up.</Text>
+            )}
+          </View>
+        </View>
+
+        {alarms.length === 0 ? (
+          <View style={styles.empty}>
+            <Text style={styles.emptyTitle}>Set your first alarm</Text>
+            <Text style={styles.emptyText}>
+              Pick a time and the task that gets you out of bed.
+            </Text>
+            <Button label="Add an alarm" icon="add" onPress={() => openEditor("new")} />
+          </View>
+        ) : (
+          <View style={styles.list}>
+            <Text style={styles.listTitle}>Your alarms</Text>
+            <View style={styles.group}>
+              {alarms.map((alarm, index) => (
+                <Fragment key={alarm.id}>
+                  {index > 0 ? <View style={styles.divider} /> : null}
+                  <AlarmRow
+                    alarm={alarm}
+                    onPress={() => openEditor(alarm.id)}
+                    onToggle={(enabled) => setEnabled(alarm.id, enabled)}
+                  />
+                </Fragment>
+              ))}
+            </View>
+          </View>
+        )}
+
+        {IS_PREVIEW ? (
+          <View style={styles.preview}>
+            <Ionicons name="information-circle-outline" size={16} color={colors.mist} />
+            <Text style={styles.previewText}>
+              Preview mode. Alarms can’t ring on their own in Expo Go yet, so open one and tap
+              Test wake-up to try it.
+            </Text>
+          </View>
+        ) : null}
+      </ScrollView>
+    </SafeAreaView>
+  )
 }
 
 const styles = StyleSheet.create({
-  container: {
+  screen: {
     flex: 1,
-    justifyContent: 'center',
-    flexDirection: 'row',
+    backgroundColor: colors.night,
   },
-  safeArea: {
-    flex: 1,
-    paddingHorizontal: Spacing.four,
-    alignItems: 'center',
-    gap: Spacing.three,
-    paddingBottom: BottomTabInset + Spacing.three,
-    maxWidth: MaxContentWidth,
+  content: {
+    paddingHorizontal: space.lg - 4,
+    paddingBottom: space.xl * 2,
+    gap: space.lg,
   },
-  heroSection: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    flex: 1,
-    paddingHorizontal: Spacing.four,
-    gap: Spacing.four,
+  header: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingTop: space.md,
+    paddingHorizontal: 4,
+  },
+  date: {
+    fontSize: 14,
+    color: colors.mist,
   },
   title: {
-    textAlign: 'center',
+    fontFamily: fonts.semibold,
+    fontSize: 28,
+    color: colors.moon,
   },
-  code: {
-    textTransform: 'uppercase',
+  // Hero sky card
+  hero: {
+    borderRadius: 28,
+    overflow: "hidden",
+    backgroundColor: colors.night,
   },
-  stepContainer: {
-    gap: Spacing.three,
-    alignSelf: 'stretch',
-    paddingHorizontal: Spacing.three,
-    paddingVertical: Spacing.four,
-    borderRadius: Spacing.four,
+  heroSun: {
+    position: "absolute",
+    right: 34,
+    bottom: GROUND + HILLS * 0.45 - SUN / 2,
   },
-});
+  heroContent: {
+    paddingHorizontal: 22,
+    paddingTop: 22,
+    paddingBottom: GROUND + HILLS + SUN / 2 - 6,
+  },
+  hills: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    bottom: GROUND - 1,
+  },
+  heroCaption: {
+    fontSize: 15,
+    color: colors.mist,
+  },
+  heroTime: {
+    fontFamily: fonts.light,
+    fontSize: 80,
+    lineHeight: 92,
+    color: colors.moon,
+    fontVariant: ["tabular-nums"],
+  },
+  heroFree: {
+    fontFamily: fonts.light,
+    fontSize: 44,
+    lineHeight: 64,
+    marginVertical: 14,
+    color: colors.moon,
+  },
+  heroMoon: {
+    position: "absolute",
+    right: 26,
+    top: 18,
+  },
+  heroDetail: {
+    fontSize: 16,
+    color: colors.moon,
+  },
+  ground: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    bottom: 0,
+    height: GROUND,
+    backgroundColor: ground,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: space.lg,
+    paddingHorizontal: 22,
+  },
+  stat: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+  },
+  statText: {
+    fontSize: 14,
+    color: colors.mist,
+  },
+  // Alarm list
+  list: {
+    gap: space.sm + 2,
+  },
+  listTitle: {
+    fontFamily: fonts.semibold,
+    fontSize: 15,
+    color: colors.mist,
+    paddingHorizontal: 4,
+  },
+  group: {
+    backgroundColor: colors.dusk,
+    borderRadius: radius.lg,
+    overflow: "hidden",
+  },
+  divider: {
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: colors.haze,
+    marginLeft: 18,
+  },
+  // Empty state
+  empty: {
+    alignItems: "center",
+    gap: space.sm,
+    paddingTop: space.md,
+    paddingHorizontal: space.lg,
+  },
+  emptyTitle: {
+    fontFamily: fonts.semibold,
+    fontSize: 20,
+    color: colors.moon,
+  },
+  emptyText: {
+    fontSize: 15,
+    lineHeight: 21,
+    color: colors.mist,
+    textAlign: "center",
+    marginBottom: space.sm,
+  },
+  // Preview note
+  preview: {
+    flexDirection: "row",
+    gap: space.sm,
+    paddingHorizontal: space.sm,
+  },
+  previewText: {
+    flex: 1,
+    fontSize: 13,
+    lineHeight: 19,
+    color: colors.mist,
+  },
+})

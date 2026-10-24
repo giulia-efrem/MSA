@@ -1,18 +1,38 @@
-import { DarkTheme, DefaultTheme, ThemeProvider } from 'expo-router';
-import * as SplashScreen from 'expo-splash-screen';
-import { useColorScheme } from 'react-native';
+import {
+  Sora_300Light,
+  Sora_400Regular,
+  Sora_600SemiBold,
+  useFonts,
+} from "@expo-google-fonts/sora"
+import { Stack } from "expo-router"
+import { StatusBar } from "expo-status-bar"
+import { View } from "react-native"
 
-import { AnimatedSplashOverlay } from '@/components/animated-icon';
-import AppTabs from '@/components/app-tabs';
+import { colors } from "@/constants/theme"
+import { AlarmsProvider } from "@/lib/alarms-context"
 
-SplashScreen.preventAutoHideAsync();
+export default function RootLayout() {
+  const [fontsLoaded] = useFonts({ Sora_300Light, Sora_400Regular, Sora_600SemiBold })
 
-export default function TabLayout() {
-  const colorScheme = useColorScheme();
+  // Show a plain night-colored screen for the split second the fonts take to load.
+  if (!fontsLoaded) return <View style={{ flex: 1, backgroundColor: colors.night }} />
+
   return (
-    <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
-      <AnimatedSplashOverlay />
-      <AppTabs />
-    </ThemeProvider>
-  );
+    <AlarmsProvider>
+      <StatusBar style="light" />
+      <Stack
+        screenOptions={{
+          headerShown: false,
+          contentStyle: { backgroundColor: colors.night },
+        }}
+      >
+        <Stack.Screen name="index" />
+        <Stack.Screen name="alarm/[id]" options={{ presentation: "modal" }} />
+        <Stack.Screen
+          name="ring/[id]"
+          options={{ presentation: "fullScreenModal", gestureEnabled: false, animation: "fade" }}
+        />
+      </Stack>
+    </AlarmsProvider>
+  )
 }
