@@ -1,4 +1,5 @@
 import { Ionicons } from "@expo/vector-icons"
+import * as Haptics from "expo-haptics"
 import { router, useLocalSearchParams } from "expo-router"
 import { useEffect, useState } from "react"
 import {
@@ -6,6 +7,7 @@ import {
   Animated,
   BackHandler,
   Easing,
+  Pressable,
   StyleSheet,
   Text,
   useWindowDimensions,
@@ -20,17 +22,21 @@ import { ScanTask } from "@/components/tasks/scan-task"
 import { ShakeTask } from "@/components/tasks/shake-task"
 import { Hills, Moon, SkyGradient, Stars, Sun } from "@/components/sky"
 import { Button } from "@/components/ui"
+import { WeatherLayer } from "@/components/weather-layer"
 import { colors, fonts, ground, radius, space } from "@/constants/theme"
 import { IS_PREVIEW, scheduleWakeCheck, stopRinging } from "@/lib/alarm-service"
 import { useAlarms } from "@/lib/alarms-context"
 import { useCoords } from "@/lib/location"
+import { pickWakeMessage } from "@/lib/messages"
+import { gradeReply, gradeWord } from "@/lib/score"
 import { beforeSunrise, skyAt, skyPoint, sunNote } from "@/lib/sun"
 import { DIFFICULTIES, IDLE_SECONDS, taskInfo } from "@/lib/tasks"
 import { currentStreak, formatDuration, formatLongDate, formatTime } from "@/lib/time"
 import type { TaskType } from "@/lib/types"
+import { greySky, useWeather, weatherMood } from "@/lib/weather"
 
 type Phase = "ringing" | "task" | "done"
-type Result = { seconds: number; checkAt: Date | null }
+type Result = { seconds: number; checkAt: Date | null; message: string; finishedAt: string }
 
 const secondsSince = (start: number) => Math.max(1, Math.round((Date.now() - start) / 1000))
 
@@ -44,16 +50,18 @@ function sunLift(altitude: number, size: number): number {
 export default function RingScreen() {
   const { id, test } = useLocalSearchParams<{ id: string; test?: string }>()
   const isTest = test === "1"
-  const { ready, alarms, records, saveAlarm, addRecord } = useAlarms()
+  const { ready, alarms, records, saveAlarm, addRecord, gradeSleep } = useAlarms()
   const alarm = alarms.find((a) => a.id === id)
   const { width, height } = useWindowDimensions()
   const coords = useCoords()
+  const weather = useWeather(coords)
 
   const [phase, setPhase] = useState<Phase>("ringing")
   const [startedAt] = useState(() => Date.now())
   const [now, setNow] = useState(() => new Date())
   const [lastActivity, setLastActivity] = useState(0)
   const [result, setResult] = useState<Result | null>(null)
+  const [grade, setGrade] = useState<number | null>(null) // your 1 to 10 sleep grade
   const [rise] = useState(() => new Animated.Value(0))
 
   // A scan alarm without a code falls back to math, so it can still be stopped.
@@ -123,11 +131,32 @@ export default function RingScreen() {
     const seconds = secondsSince(startedAt)
     setPhase("done")
     await stopRinging(alarm.id)
-    addRecord({ alarmId: alarm.id, finishedAt: new Date().toISOString(), seconds })
+
+    const finishedAt = new Date()
+    const record = { alarmId: alarm.id, finishedAt: finishedAt.toISOString(), seconds }
+    const streak = currentStreak([...records, record], finishedAt)
+    addRecord(record)
+
     // One-time alarms switch themselves off after ringing.
     if (!isTest && alarm.days.length === 0) saveAlarm({ ...alarm, enabled: false })
     const checkAt = alarm.wakeCheck ? await scheduleWakeCheck(alarm) : null
-    setResult({ seconds, checkAt })
+    const message = await pickWakeMessage({
+      hour: alarm.hour,
+      minute: alarm.minute,
+      beforeSunrise: beforeSunrise(finishedAt, coords),
+      weekend: finishedAt.getDay() === 0 || finishedAt.getDay() === 6,
+      streak,
+      seconds,
+      weather,
+    })
+    setResult({ seconds, checkAt, message, finishedAt: record.finishedAt })
+  }
+
+  function pickGrade(value: number) {
+    if (!result) return
+    Haptics.selectionAsync()
+    setGrade(value)
+    gradeSleep(result.finishedAt, value)
   }
 
   function close() {
@@ -149,10 +178,16 @@ export default function RingScreen() {
   const info = taskInfo(task)
   const difficultyLabel = DIFFICULTIES.find((d) => d.value === alarm.difficulty)?.label ?? ""
 
-  // The real sky outside right now.
+  // The real sky outside right now, greyed out if it's cloudy.
   const sky = skyAt(now, coords)
+  const mood = weatherMood(weather)
+  const skyColors = greySky(sky.colors, mood.grey)
+  const night = sky.sun.altitude < -4
   const earlyBird = beforeSunrise(now, coords)
   const sunText = sunNote(now, coords)
+  const weatherText = weather
+    ? `${Math.round(weather.temperature)}°, ${weather.label.toLowerCase()}`
+    : null
 
   // The moon, placed where it really is, in the open sky between the text and the hills.
   function moonSpot(horizon: number, size: number) {
@@ -175,10 +210,10 @@ export default function RingScreen() {
 
     return (
       <View style={styles.screen}>
-        <SkyGradient colors={sky.colors} />
-        <Stars opacity={sky.stars} twinkle />
+        <SkyGradient colors={skyColors} />
+        <Stars opacity={sky.stars * mood.stars} twinkle />
         {sky.moon.altitude > 0 ? (
-          <View style={[styles.sunWrap, moonSpot(horizonFromTop, 34)]}>
+          <View style={[styles.sunWrap, moonSpot(horizonFromTop, 34), { opacity: mood.bodies }]}>
             <Moon size={34} fraction={sky.moon.fraction} waxing={sky.moon.waxing} />
           </View>
         ) : null}
@@ -189,6 +224,7 @@ export default function RingScreen() {
               {
                 left: (width - sun) / 2,
                 bottom: horizon + sunLift(sky.sun.altitude, sun) - sun / 2,
+                opacity: mood.bodies,
                 transform: [{ translateY: sunRise }],
               },
             ]}
@@ -196,6 +232,7 @@ export default function RingScreen() {
             <Sun size={sun} color={sky.sun.color} glow={sky.sun.glow} />
           </Animated.View>
         ) : null}
+        <WeatherLayer weather={weather} width={width} height={height} night={night} />
         <View style={[styles.hills, { bottom: groundHeight - 1 }]}>
           <Hills height={hillsHeight} />
         </View>
@@ -211,6 +248,7 @@ export default function RingScreen() {
             <Text style={styles.ringTime}>{formatTime(now.getHours(), now.getMinutes())}</Text>
             <Text style={styles.ringLabel}>{alarm.label || "Time to get up"}</Text>
             {sunText ? <Text style={styles.ringSun}>{sunText}</Text> : null}
+            {weatherText ? <Text style={styles.ringSun}>{weatherText}</Text> : null}
             {timedOut ? (
               <Text style={styles.ringBack}>You stopped, so the alarm is back.</Text>
             ) : null}
@@ -287,17 +325,17 @@ export default function RingScreen() {
   const checkTime = result.checkAt
     ? formatTime(result.checkAt.getHours(), result.checkAt.getMinutes())
     : null
-  const doneSun = Math.min(width * 0.42, 190)
-  const doneGround = Math.round(height * 0.3)
-  const doneHills = Math.round(height * 0.08)
+  const doneSun = Math.min(width * 0.36, 160)
+  const doneGround = Math.max(Math.round(height * 0.44), 360)
+  const doneHills = Math.round(height * 0.07)
   const doneHorizon = doneGround + doneHills * 0.45
 
   return (
     <View style={styles.screen}>
-      <SkyGradient colors={sky.colors} />
-      <Stars opacity={sky.stars} />
+      <SkyGradient colors={skyColors} />
+      <Stars opacity={sky.stars * mood.stars} />
       {sky.moon.altitude > 0 ? (
-        <View style={[styles.sunWrap, moonSpot(height - doneHorizon, 30)]}>
+        <View style={[styles.sunWrap, moonSpot(height - doneHorizon, 30), { opacity: mood.bodies }]}>
           <Moon size={30} fraction={sky.moon.fraction} waxing={sky.moon.waxing} />
         </View>
       ) : null}
@@ -308,12 +346,14 @@ export default function RingScreen() {
             {
               left: (width - doneSun) / 2,
               bottom: doneHorizon + sunLift(sky.sun.altitude, doneSun) - doneSun / 2,
+              opacity: mood.bodies,
             },
           ]}
         >
           <Sun size={doneSun} color={sky.sun.color} glow={sky.sun.glow} />
         </View>
       ) : null}
+      <WeatherLayer weather={weather} width={width} height={height} night={night} />
       <View style={[styles.hills, { bottom: doneGround - 1 }]}>
         <Hills height={doneHills} />
       </View>
@@ -322,20 +362,66 @@ export default function RingScreen() {
       <SafeAreaView style={styles.ringLayout}>
         <View style={styles.doneTop}>
           <Text style={styles.doneTitle}>{earlyBird ? "Up before the sun" : "You’re up"}</Text>
-          <Text style={styles.ringDate}>{sunText ?? formatLongDate(now)}</Text>
+          <Text style={styles.ringDate}>
+            {[sunText ?? formatLongDate(now), weatherText].filter(Boolean).join(", ")}
+          </Text>
+          <Text style={styles.doneMessage}>{result.message}</Text>
         </View>
 
         <View style={styles.doneBottom}>
+          <View style={styles.gradeBlock}>
+            <Text style={styles.gradeQuestion}>How did you sleep?</Text>
+            <View style={styles.gradeGrid} accessibilityRole="radiogroup">
+              {[
+                [1, 2, 3, 4, 5],
+                [6, 7, 8, 9, 10],
+              ].map((row) => (
+                <View key={row[0]} style={styles.gradeRow}>
+                  {row.map((value) => {
+                    const selected = grade === value
+                    return (
+                      <Pressable
+                        key={value}
+                        accessibilityRole="radio"
+                        accessibilityLabel={`${value} out of 10`}
+                        accessibilityState={{ selected }}
+                        onPress={() => pickGrade(value)}
+                        style={({ pressed }) => [
+                          styles.gradeButton,
+                          selected && styles.gradeButtonSelected,
+                          pressed && styles.gradeButtonPressed,
+                        ]}
+                      >
+                        <Text style={[styles.gradeNumber, selected && styles.gradeNumberSelected]}>
+                          {value}
+                        </Text>
+                      </Pressable>
+                    )
+                  })}
+                </View>
+              ))}
+            </View>
+            {grade !== null ? (
+              <View>
+                <Text style={styles.gradeResult}>
+                  <Text style={styles.gradeResultScore}>{grade}/10</Text> {gradeWord(grade)}
+                </Text>
+                <Text style={styles.gradeReply}>{gradeReply(grade)}</Text>
+              </View>
+            ) : (
+              <Text style={styles.gradeReply}>Tap a number from 1 (awful) to 10 (amazing).</Text>
+            )}
+          </View>
           <View style={styles.doneStats}>
             <View style={styles.doneStat}>
-              <Ionicons name="checkmark-circle" size={20} color={colors.leaf} />
-              <Text style={styles.doneText}>Task done in {formatDuration(result.seconds)}</Text>
+              <Ionicons name="checkmark-circle" size={18} color={colors.leaf} />
+              <Text style={styles.doneText}>Done in {formatDuration(result.seconds)}</Text>
             </View>
             {streak > 0 ? (
               <View style={styles.doneStat}>
-                <Ionicons name="flame" size={20} color={colors.dawn} />
+                <Ionicons name="flame" size={18} color={colors.dawn} />
                 <Text style={styles.doneText}>
-                  {streak === 1 ? "1 morning in a row" : `${streak} mornings in a row`}
+                  {streak === 1 ? "1 morning" : `${streak} mornings`} in a row
                 </Text>
               </View>
             ) : null}
@@ -508,29 +594,88 @@ const styles = StyleSheet.create({
   },
   doneTitle: {
     fontFamily: fonts.semibold,
-    fontSize: 40,
+    fontSize: 38,
     color: colors.moon,
+  },
+  doneMessage: {
+    fontSize: 18,
+    lineHeight: 25,
+    color: colors.moon,
+    marginTop: space.md,
+    maxWidth: 330,
   },
   doneBottom: {
     marginTop: "auto",
-    gap: space.lg,
+    gap: space.md + 4,
     paddingBottom: space.lg,
   },
+  gradeBlock: {
+    gap: space.sm + 2,
+  },
+  gradeQuestion: {
+    fontFamily: fonts.semibold,
+    fontSize: 17,
+    color: colors.moon,
+  },
+  gradeGrid: {
+    gap: 6,
+  },
+  gradeRow: {
+    flexDirection: "row",
+    gap: 6,
+  },
+  gradeButton: {
+    flex: 1,
+    height: 46,
+    borderRadius: radius.sm,
+    backgroundColor: colors.dusk,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  gradeButtonSelected: {
+    backgroundColor: colors.dawn,
+  },
+  gradeButtonPressed: {
+    opacity: 0.7,
+  },
+  gradeNumber: {
+    fontFamily: fonts.semibold,
+    fontSize: 17,
+    color: colors.mist,
+  },
+  gradeNumberSelected: {
+    color: colors.dawnInk,
+  },
+  gradeResult: {
+    fontFamily: fonts.semibold,
+    fontSize: 16,
+    color: colors.moon,
+  },
+  gradeResultScore: {
+    color: colors.dawn,
+  },
+  gradeReply: {
+    fontSize: 14,
+    lineHeight: 20,
+    color: colors.mist,
+  },
   doneStats: {
-    gap: space.md,
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: space.lg,
   },
   doneStat: {
     flexDirection: "row",
     alignItems: "center",
-    gap: space.sm + 2,
+    gap: 6,
   },
   doneText: {
-    fontSize: 17,
+    fontSize: 15,
     color: colors.moon,
   },
   doneNote: {
-    fontSize: 14,
-    lineHeight: 20,
+    fontSize: 13,
+    lineHeight: 19,
     color: colors.mist,
   },
 })

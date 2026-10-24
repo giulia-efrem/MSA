@@ -19,6 +19,7 @@ export type WakeRecord = {
   alarmId: string
   finishedAt: string // ISO date string
   seconds: number // time from the alarm starting to the task being done
+  sleep?: number // how you graded your sleep, 1 to 10 (empty if you skipped it)
 }
 
 // Every task screen receives these props from the ringing screen.

@@ -14,6 +14,7 @@ type AlarmsContextValue = {
   deleteAlarm: (id: string) => void
   setEnabled: (id: string, enabled: boolean) => void
   addRecord: (record: WakeRecord) => void
+  gradeSleep: (finishedAt: string, grade: number) => void
 }
 
 const AlarmsContext = createContext<AlarmsContextValue | null>(null)
@@ -61,6 +62,11 @@ export function AlarmsProvider({ children }: { children: ReactNode }) {
       setAlarms((current) => current.map((a) => (a.id === id ? { ...a, enabled } : a))),
     // Keep the last 200 wake-ups, which is plenty for streaks and averages.
     addRecord: (record) => setRecords((current) => [...current, record].slice(-200)),
+    // Saves the 1 to 10 sleep grade you picked for one wake-up.
+    gradeSleep: (finishedAt, grade) =>
+      setRecords((current) =>
+        current.map((r) => (r.finishedAt === finishedAt ? { ...r, sleep: grade } : r)),
+      ),
   }
 
   return <AlarmsContext.Provider value={value}>{children}</AlarmsContext.Provider>
