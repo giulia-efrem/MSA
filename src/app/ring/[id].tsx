@@ -14,15 +14,17 @@ import {
 } from "react-native"
 import { SafeAreaView } from "react-native-safe-area-context"
 
-import { Hills, SkyGradient, Stars, Sun } from "@/components/sky"
 import { MathTask } from "@/components/tasks/math-task"
 import { MemoryTask } from "@/components/tasks/memory-task"
 import { ScanTask } from "@/components/tasks/scan-task"
 import { ShakeTask } from "@/components/tasks/shake-task"
+import { Hills, Moon, SkyGradient, Stars, Sun } from "@/components/sky"
 import { Button } from "@/components/ui"
 import { colors, fonts, ground, radius, space } from "@/constants/theme"
 import { IS_PREVIEW, scheduleWakeCheck, stopRinging } from "@/lib/alarm-service"
 import { useAlarms } from "@/lib/alarms-context"
+import { useCoords } from "@/lib/location"
+import { beforeSunrise, skyAt, skyPoint, sunNote } from "@/lib/sun"
 import { DIFFICULTIES, IDLE_SECONDS, taskInfo } from "@/lib/tasks"
 import { currentStreak, formatDuration, formatLongDate, formatTime } from "@/lib/time"
 import type { TaskType } from "@/lib/types"
@@ -32,12 +34,20 @@ type Result = { seconds: number; checkAt: Date | null }
 
 const secondsSince = (start: number) => Math.max(1, Math.round((Date.now() - start) / 1000))
 
+// How far above (+) or below (-) the horizon the big sun's center sits, in pixels.
+// It follows the real sun: on a dark winter morning it's still hidden behind the hills.
+function sunLift(altitude: number, size: number): number {
+  if (altitude >= 0) return (Math.min(altitude, 25) / 25) * size * 0.7
+  return altitude * (size / 12)
+}
+
 export default function RingScreen() {
   const { id, test } = useLocalSearchParams<{ id: string; test?: string }>()
   const isTest = test === "1"
   const { ready, alarms, records, saveAlarm, addRecord } = useAlarms()
   const alarm = alarms.find((a) => a.id === id)
   const { width, height } = useWindowDimensions()
+  const coords = useCoords()
 
   const [phase, setPhase] = useState<Phase>("ringing")
   const [startedAt] = useState(() => Date.now())
@@ -139,30 +149,53 @@ export default function RingScreen() {
   const info = taskInfo(task)
   const difficultyLabel = DIFFICULTIES.find((d) => d.value === alarm.difficulty)?.label ?? ""
 
+  // The real sky outside right now.
+  const sky = skyAt(now, coords)
+  const earlyBird = beforeSunrise(now, coords)
+  const sunText = sunNote(now, coords)
+
+  // The moon, placed where it really is, in the open sky between the text and the hills.
+  function moonSpot(horizon: number, size: number) {
+    const point = skyPoint(sky.moon.altitude, sky.moon.azimuth, coords.latitude)
+    const skyTop = height * 0.4
+    return {
+      left: point.x * width - size / 2,
+      top: horizon - point.y * (horizon - skyTop) - size / 2,
+    }
+  }
+
   // ---------- Ringing ----------
   if (ringing) {
     const sun = Math.min(width * 0.62, 280)
     const groundHeight = Math.round(height * 0.27)
     const hillsHeight = Math.round(height * 0.09)
     const horizon = groundHeight + hillsHeight * 0.45
-    const sunRise = rise.interpolate({ inputRange: [0, 1], outputRange: [sun * 0.3, -sun * 0.1] })
+    const horizonFromTop = height - horizon
+    const sunRise = rise.interpolate({ inputRange: [0, 1], outputRange: [sun * 0.12, 0] })
 
     return (
       <View style={styles.screen}>
-        <SkyGradient variant="dawn" />
-        <Stars opacity={0.8} twinkle />
-        <Animated.View
-          style={[
-            styles.sunWrap,
-            {
-              left: (width - sun) / 2,
-              bottom: horizon - sun / 2,
-              transform: [{ translateY: sunRise }],
-            },
-          ]}
-        >
-          <Sun size={sun} />
-        </Animated.View>
+        <SkyGradient colors={sky.colors} />
+        <Stars opacity={sky.stars} twinkle />
+        {sky.moon.altitude > 0 ? (
+          <View style={[styles.sunWrap, moonSpot(horizonFromTop, 34)]}>
+            <Moon size={34} fraction={sky.moon.fraction} waxing={sky.moon.waxing} />
+          </View>
+        ) : null}
+        {sky.sun.altitude > -6 ? (
+          <Animated.View
+            style={[
+              styles.sunWrap,
+              {
+                left: (width - sun) / 2,
+                bottom: horizon + sunLift(sky.sun.altitude, sun) - sun / 2,
+                transform: [{ translateY: sunRise }],
+              },
+            ]}
+          >
+            <Sun size={sun} color={sky.sun.color} glow={sky.sun.glow} />
+          </Animated.View>
+        ) : null}
         <View style={[styles.hills, { bottom: groundHeight - 1 }]}>
           <Hills height={hillsHeight} />
         </View>
@@ -177,6 +210,7 @@ export default function RingScreen() {
           <View style={styles.ringCenter}>
             <Text style={styles.ringTime}>{formatTime(now.getHours(), now.getMinutes())}</Text>
             <Text style={styles.ringLabel}>{alarm.label || "Time to get up"}</Text>
+            {sunText ? <Text style={styles.ringSun}>{sunText}</Text> : null}
             {timedOut ? (
               <Text style={styles.ringBack}>You stopped, so the alarm is back.</Text>
             ) : null}
@@ -256,19 +290,30 @@ export default function RingScreen() {
   const doneSun = Math.min(width * 0.42, 190)
   const doneGround = Math.round(height * 0.3)
   const doneHills = Math.round(height * 0.08)
+  const doneHorizon = doneGround + doneHills * 0.45
 
   return (
     <View style={styles.screen}>
-      <SkyGradient variant="morning" />
-      <Stars opacity={0.25} />
-      <View
-        style={[
-          styles.sunWrap,
-          { left: (width - doneSun) / 2, bottom: doneGround + doneHills * 0.6 + 24 },
-        ]}
-      >
-        <Sun size={doneSun} />
-      </View>
+      <SkyGradient colors={sky.colors} />
+      <Stars opacity={sky.stars} />
+      {sky.moon.altitude > 0 ? (
+        <View style={[styles.sunWrap, moonSpot(height - doneHorizon, 30)]}>
+          <Moon size={30} fraction={sky.moon.fraction} waxing={sky.moon.waxing} />
+        </View>
+      ) : null}
+      {sky.sun.altitude > -6 ? (
+        <View
+          style={[
+            styles.sunWrap,
+            {
+              left: (width - doneSun) / 2,
+              bottom: doneHorizon + sunLift(sky.sun.altitude, doneSun) - doneSun / 2,
+            },
+          ]}
+        >
+          <Sun size={doneSun} color={sky.sun.color} glow={sky.sun.glow} />
+        </View>
+      ) : null}
       <View style={[styles.hills, { bottom: doneGround - 1 }]}>
         <Hills height={doneHills} />
       </View>
@@ -276,8 +321,8 @@ export default function RingScreen() {
 
       <SafeAreaView style={styles.ringLayout}>
         <View style={styles.doneTop}>
-          <Text style={styles.doneTitle}>You’re up</Text>
-          <Text style={styles.ringDate}>{formatLongDate(now)}</Text>
+          <Text style={styles.doneTitle}>{earlyBird ? "Up before the sun" : "You’re up"}</Text>
+          <Text style={styles.ringDate}>{sunText ?? formatLongDate(now)}</Text>
         </View>
 
         <View style={styles.doneBottom}>
@@ -379,6 +424,12 @@ const styles = StyleSheet.create({
     fontFamily: fonts.semibold,
     fontSize: 22,
     color: colors.moon,
+  },
+  ringSun: {
+    fontSize: 16,
+    color: colors.moon,
+    opacity: 0.8,
+    marginTop: space.xs,
   },
   ringBack: {
     fontSize: 16,

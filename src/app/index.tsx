@@ -5,11 +5,13 @@ import { ScrollView, StyleSheet, Text, View } from "react-native"
 import { SafeAreaView } from "react-native-safe-area-context"
 
 import { AlarmRow } from "@/components/alarm-row"
-import { Hills, Moon, SkyGradient, Stars, Sun } from "@/components/sky"
+import { Hills, SkyBodies, SkyGradient, Stars } from "@/components/sky"
 import { Button, IconButton } from "@/components/ui"
 import { colors, fonts, ground, radius, space } from "@/constants/theme"
 import { IS_PREVIEW } from "@/lib/alarm-service"
 import { useAlarms } from "@/lib/alarms-context"
+import { useCoords } from "@/lib/location"
+import { clockTime, skyAt, sunTimes, wakeVsSunrise } from "@/lib/sun"
 import { taskInfo } from "@/lib/tasks"
 import {
   averageSeconds,
@@ -23,13 +25,18 @@ import {
   nextRing,
 } from "@/lib/time"
 
-const SUN = 92
+const SUN = 44
+const MOON = 26
+const SKY_BAND = 64 // open sky between the text and the hills, where the sun and moon move
 const GROUND = 46 // the dark strip at the bottom of the sky card
 const HILLS = 40 // how tall the hills above it are
 
 export default function HomeScreen() {
   const { ready, alarms, records, setEnabled } = useAlarms()
+  const coords = useCoords()
   const [now, setNow] = useState(() => new Date())
+  const [heroWidth, setHeroWidth] = useState(0)
+  const [textBottom, setTextBottom] = useState(0)
 
   // Refresh the "Rings in..." text every 30 seconds.
   useEffect(() => {
@@ -44,6 +51,12 @@ export default function HomeScreen() {
 
   const streak = currentStreak(records, now)
   const average = averageSeconds(records)
+
+  // The real sky right now, and today's sunrise and sunset.
+  const sky = skyAt(now, coords)
+  const today = sunTimes(now, coords)
+  const about = coords.approximate ? "≈ " : ""
+  const sunNote = upcoming ? wakeVsSunrise(upcoming.at, coords) : null
 
   const openEditor = (id: string) => router.push({ pathname: "/alarm/[id]", params: { id } })
 
@@ -60,43 +73,60 @@ export default function HomeScreen() {
           <IconButton icon="add" label="Add alarm" onPress={() => openEditor("new")} />
         </View>
 
-        {/* The next alarm as a little sky, with the sun waiting on the horizon */}
-        <View style={styles.hero}>
-          <SkyGradient variant={upcoming ? "dawn" : "night"} />
-          <Stars />
-          {upcoming ? (
-            <View style={styles.heroSun}>
-              <Sun size={SUN} />
-            </View>
-          ) : (
-            <View style={styles.heroMoon}>
-              <Moon size={30} />
-            </View>
-          )}
+        {/* The next alarm, over the real sky outside right now */}
+        <View style={styles.hero} onLayout={(e) => setHeroWidth(e.nativeEvent.layout.width)}>
+          <SkyGradient colors={sky.colors} />
+          <Stars opacity={sky.stars} />
+          {heroWidth > 0 && textBottom > 0 ? (
+            <SkyBodies
+              sky={sky}
+              latitude={coords.latitude}
+              width={heroWidth}
+              horizon={textBottom + SKY_BAND + HILLS * 0.45}
+              top={textBottom + SUN / 2}
+              sunSize={SUN}
+              moonSize={MOON}
+            />
+          ) : null}
 
           <View style={styles.heroContent}>
-            {upcoming ? (
-              <>
-                <Text style={styles.heroCaption}>{describeNext(upcoming.at, now)}</Text>
-                <Text style={styles.heroTime}>
-                  {formatTime(upcoming.alarm.hour, upcoming.alarm.minute)}
-                </Text>
-                <Text style={styles.heroDetail}>
-                  {upcoming.alarm.label || describeDays(upcoming.alarm.days)}, then{" "}
-                  {taskInfo(upcoming.alarm.task).title.toLowerCase()}
-                </Text>
-              </>
-            ) : (
-              <>
-                <Text style={styles.heroCaption}>No alarm is on</Text>
-                <Text style={styles.heroFree}>Free morning</Text>
-                <Text style={styles.heroDetail}>
-                  {alarms.length > 0
-                    ? "Turn an alarm on below to get up on time."
-                    : "Tap + to set your first alarm."}
-                </Text>
-              </>
-            )}
+            <View
+              onLayout={(e) =>
+                setTextBottom(e.nativeEvent.layout.y + e.nativeEvent.layout.height)
+              }
+            >
+              {upcoming ? (
+                <>
+                  <Text style={styles.heroCaption}>{describeNext(upcoming.at, now)}</Text>
+                  <Text style={styles.heroTime}>
+                    {formatTime(upcoming.alarm.hour, upcoming.alarm.minute)}
+                  </Text>
+                  <Text style={styles.heroDetail}>
+                    {upcoming.alarm.label || describeDays(upcoming.alarm.days)}, then{" "}
+                    {taskInfo(upcoming.alarm.task).title.toLowerCase()}
+                  </Text>
+                  {sunNote ? (
+                    <View style={styles.sunNote}>
+                      <Ionicons name="sunny" size={14} color={colors.dawn} />
+                      <Text style={styles.sunNoteText}>
+                        {about}
+                        {sunNote}
+                      </Text>
+                    </View>
+                  ) : null}
+                </>
+              ) : (
+                <>
+                  <Text style={styles.heroCaption}>No alarm is on</Text>
+                  <Text style={styles.heroFree}>Free morning</Text>
+                  <Text style={styles.heroDetail}>
+                    {alarms.length > 0
+                      ? "Turn an alarm on below to get up on time."
+                      : "Tap + to set your first alarm."}
+                  </Text>
+                </>
+              )}
+            </View>
           </View>
 
           <View style={styles.hills}>
@@ -104,26 +134,39 @@ export default function HomeScreen() {
           </View>
 
           <View style={styles.ground}>
-            {records.length > 0 ? (
-              <>
-                <View style={styles.stat}>
-                  <Ionicons name="flame" size={16} color={colors.dawn} />
-                  <Text style={styles.statText}>
-                    {streak === 1 ? "1 morning in a row" : `${streak} mornings in a row`}
-                  </Text>
-                </View>
-                {average !== null ? (
-                  <View style={styles.stat}>
-                    <Ionicons name="timer-outline" size={16} color={colors.dawn} />
-                    <Text style={styles.statText}>Up in {formatDuration(average)}</Text>
-                  </View>
-                ) : null}
-              </>
-            ) : (
-              <Text style={styles.statText}>Your streak starts with your first wake-up.</Text>
-            )}
+            <View style={styles.stat}>
+              <Ionicons name="sunny-outline" size={16} color={colors.dawn} />
+              <Text style={styles.statText}>
+                Sunrise {about}
+                {clockTime(today.sunrise)}
+              </Text>
+            </View>
+            <View style={styles.stat}>
+              <Ionicons name="moon-outline" size={16} color={colors.mist} />
+              <Text style={styles.statText}>
+                Sunset {about}
+                {clockTime(today.sunset)}
+              </Text>
+            </View>
           </View>
         </View>
+
+        {records.length > 0 ? (
+          <View style={styles.streakRow}>
+            <View style={styles.stat}>
+              <Ionicons name="flame" size={16} color={colors.dawn} />
+              <Text style={styles.statText}>
+                {streak === 1 ? "1 morning in a row" : `${streak} mornings in a row`}
+              </Text>
+            </View>
+            {average !== null ? (
+              <View style={styles.stat}>
+                <Ionicons name="timer-outline" size={16} color={colors.dawn} />
+                <Text style={styles.statText}>Up in {formatDuration(average)} on average</Text>
+              </View>
+            ) : null}
+          </View>
+        ) : null}
 
         {alarms.length === 0 ? (
           <View style={styles.empty}>
@@ -197,15 +240,21 @@ const styles = StyleSheet.create({
     overflow: "hidden",
     backgroundColor: colors.night,
   },
-  heroSun: {
-    position: "absolute",
-    right: 34,
-    bottom: GROUND + HILLS * 0.45 - SUN / 2,
-  },
   heroContent: {
     paddingHorizontal: 22,
     paddingTop: 22,
-    paddingBottom: GROUND + HILLS + SUN / 2 - 6,
+    paddingBottom: SKY_BAND + HILLS + GROUND,
+  },
+  sunNote: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    marginTop: 6,
+  },
+  sunNoteText: {
+    fontSize: 14,
+    color: colors.moon,
+    opacity: 0.85,
   },
   hills: {
     position: "absolute",
@@ -231,11 +280,6 @@ const styles = StyleSheet.create({
     marginVertical: 14,
     color: colors.moon,
   },
-  heroMoon: {
-    position: "absolute",
-    right: 26,
-    top: 18,
-  },
   heroDetail: {
     fontSize: 16,
     color: colors.moon,
@@ -260,6 +304,13 @@ const styles = StyleSheet.create({
   statText: {
     fontSize: 14,
     color: colors.mist,
+  },
+  streakRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: space.lg,
+    paddingHorizontal: 6,
+    marginTop: -space.sm,
   },
   // Alarm list
   list: {

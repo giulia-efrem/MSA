@@ -19,13 +19,15 @@ import { SafeAreaView } from "react-native-safe-area-context"
 
 import { CodeScanner } from "@/components/code-scanner"
 import { DayPicker } from "@/components/day-picker"
-import { Hills, SkyGradient, Stars } from "@/components/sky"
+import { Hills, SkyBodies, SkyGradient, Stars } from "@/components/sky"
 import { TaskPicker } from "@/components/task-picker"
 import { Button, Section, Segmented } from "@/components/ui"
 import { colors, fonts, radius, space } from "@/constants/theme"
 import { newAlarmId, useAlarms } from "@/lib/alarms-context"
+import { useCoords } from "@/lib/location"
+import { clockTime, skyAt, sunTimes, wakeVsSunrise } from "@/lib/sun"
 import { DIFFICULTIES, difficultyHint } from "@/lib/tasks"
-import { describeDays, formatTime } from "@/lib/time"
+import { describeDays, formatTime, nextRing } from "@/lib/time"
 import type { Alarm } from "@/lib/types"
 
 function blankAlarm(): Alarm {
@@ -42,6 +44,9 @@ function blankAlarm(): Alarm {
   }
 }
 
+const CARD_HILLS = 36
+const CARD_SKY = 64 // open sky under the time, where the sun and moon move
+
 function timeAsDate(hour: number, minute: number): Date {
   const date = new Date()
   date.setHours(hour, minute, 0, 0)
@@ -55,6 +60,16 @@ export default function AlarmEditorScreen() {
 
   const [draft, setDraft] = useState<Alarm>(() => existing ?? blankAlarm())
   const [scanning, setScanning] = useState(false)
+  const [card, setCard] = useState({ width: 0, height: 0 })
+  const coords = useCoords()
+
+  // The sky as it will look when this alarm next rings.
+  const ringsAt = nextRing(draft)
+  const sky = skyAt(ringsAt, coords)
+  const sun = sunTimes(ringsAt, coords)
+  const sunNote = wakeVsSunrise(ringsAt, coords)
+  const about = coords.approximate ? "≈ " : ""
+  const cardHorizon = card.height - CARD_HILLS * 0.55
 
   const update = (changes: Partial<Alarm>) => setDraft((current) => ({ ...current, ...changes }))
   const setTime = (date: Date) => update({ hour: date.getHours(), minute: date.getMinutes() })
@@ -125,12 +140,28 @@ export default function AlarmEditorScreen() {
       </View>
 
       <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-        {/* The time sits in a little dawn sky, like on the home screen */}
-        <View style={styles.timeCard}>
-          <SkyGradient variant="dawn" />
-          <Stars opacity={0.6} />
+        {/* The time sits in the sky as it will look when the alarm rings */}
+        <View
+          style={styles.timeCard}
+          onLayout={(e) =>
+            setCard({ width: e.nativeEvent.layout.width, height: e.nativeEvent.layout.height })
+          }
+        >
+          <SkyGradient colors={sky.colors} />
+          <Stars opacity={sky.stars * 0.8} />
+          {card.width > 0 ? (
+            <SkyBodies
+              sky={sky}
+              latitude={coords.latitude}
+              width={card.width}
+              horizon={cardHorizon}
+              top={cardHorizon - CARD_SKY}
+              sunSize={34}
+              moonSize={22}
+            />
+          ) : null}
           <View style={styles.timeHills}>
-            <Hills height={36} />
+            <Hills height={CARD_HILLS} />
           </View>
           {Platform.OS === "ios" ? (
             <DateTimePicker
@@ -154,6 +185,30 @@ export default function AlarmEditorScreen() {
               <Text style={styles.androidTimeHint}>Tap to change the time</Text>
             </Pressable>
           )}
+        </View>
+
+        <View style={styles.sunInfo}>
+          <View style={styles.sunTimes}>
+            <View style={styles.sunTime}>
+              <Ionicons name="sunny-outline" size={16} color={colors.dawn} />
+              <Text style={styles.sunTimeText}>
+                Sunrise {about}
+                {clockTime(sun.sunrise)}
+              </Text>
+            </View>
+            <View style={styles.sunTime}>
+              <Ionicons name="moon-outline" size={16} color={colors.mist} />
+              <Text style={styles.sunTimeText}>
+                Sunset {about}
+                {clockTime(sun.sunset)}
+              </Text>
+            </View>
+          </View>
+          {sunNote ? (
+            <Text style={styles.sunNote}>
+              You’ll wake up {sunNote.charAt(0).toLowerCase() + sunNote.slice(1)}.
+            </Text>
+          ) : null}
         </View>
 
         <Section title="Label">
@@ -293,7 +348,29 @@ const styles = StyleSheet.create({
   timeCard: {
     borderRadius: 28,
     overflow: "hidden",
-    paddingBottom: 30,
+    paddingBottom: CARD_SKY + CARD_HILLS - 20,
+  },
+  sunInfo: {
+    gap: 6,
+    marginTop: -space.md,
+    paddingHorizontal: 4,
+  },
+  sunTimes: {
+    flexDirection: "row",
+    gap: space.lg,
+  },
+  sunTime: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+  },
+  sunTimeText: {
+    fontSize: 14,
+    color: colors.mist,
+  },
+  sunNote: {
+    fontSize: 14,
+    color: colors.moon,
   },
   timeHills: {
     position: "absolute",

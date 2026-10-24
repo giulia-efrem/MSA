@@ -4,10 +4,16 @@ import { AccessibilityInfo, Animated, StyleSheet, View } from "react-native"
 import Svg, { Circle, Defs, Path, RadialGradient, Stop } from "react-native-svg"
 
 import { colors, ground, hillFar, sky } from "@/constants/theme"
+import { skyPoint, type SkyState } from "@/lib/sun"
+
+type GradientProps = {
+  variant?: keyof typeof sky // one of the fixed skies from the theme
+  colors?: readonly [string, string, ...string[]] // or any colors, top to horizon
+}
 
 // A sky gradient that fills whatever it's placed in.
-export function SkyGradient({ variant }: { variant: keyof typeof sky }) {
-  return <LinearGradient colors={sky[variant]} style={StyleSheet.absoluteFill} />
+export function SkyGradient({ variant = "dawn", colors: custom }: GradientProps) {
+  return <LinearGradient colors={custom ?? sky[variant]} style={StyleSheet.absoluteFill} />
 }
 
 // A handful of fixed stars, positioned in percent so they fit any size.
@@ -103,23 +109,86 @@ function Glow({ size, color, strength }: { size: number; color: string; strength
   )
 }
 
-// The sun, glowing softly.
-export function Sun({ size }: { size: number }) {
+// The sun, glowing softly. It's orange near the horizon and paler when high.
+export function Sun({
+  size,
+  color = colors.dawn,
+  glow = "#FFC79A",
+}: {
+  size: number
+  color?: string
+  glow?: string
+}) {
   return (
     <View style={[styles.centerBox, { width: size, height: size }]}>
-      <Glow size={size * 2.6} color="#FFC79A" strength={0.55} />
-      <View style={[styles.sun, disc(size)]} />
+      <Glow size={size * 2.6} color={glow} strength={0.55} />
+      <View style={[disc(size), { backgroundColor: color }]} />
     </View>
   )
 }
 
-// The moon, for nights with no alarm on.
-export function Moon({ size }: { size: number }) {
+// The moon, showing its real phase: fraction is how much is lit (0 = new, 1 = full).
+export function Moon({
+  size,
+  fraction = 1,
+  waxing = true,
+}: {
+  size: number
+  fraction?: number
+  waxing?: boolean
+}) {
+  const r = size / 2
+  // The lit part is a half circle plus or minus a half ellipse (the shadow line).
+  const shadowWidth = r * Math.abs(1 - 2 * fraction)
+  const crescent = fraction < 0.5
+  const outerSweep = waxing ? 1 : 0
+  const innerSweep = waxing === crescent ? 0 : 1
+  const lit = `M ${r} 0 A ${r} ${r} 0 0 ${outerSweep} ${r} ${size} A ${shadowWidth} ${r} 0 0 ${innerSweep} ${r} 0 Z`
+
   return (
     <View style={[styles.centerBox, { width: size, height: size }]}>
-      <Glow size={size * 3} color="#D9D6F2" strength={0.3} />
-      <View style={[styles.moon, disc(size)]} />
+      <Glow size={size * 3} color="#D9D6F2" strength={0.1 + 0.25 * fraction} />
+      <Svg width={size} height={size}>
+        <Circle cx={r} cy={r} r={r} fill="#2B2E58" opacity={0.6} />
+        <Path d={lit} fill="#ECE9F7" />
+      </Svg>
     </View>
+  )
+}
+
+type BodiesProps = {
+  sky: SkyState
+  latitude: number
+  width: number
+  horizon: number // y position of the horizon, from the top of the picture
+  top: number // the highest y position the sun or moon can reach
+  sunSize: number
+  moonSize: number
+}
+
+// The sun and moon placed where they really are in the sky right now.
+// Put this before <Hills> so they set behind the hills.
+export function SkyBodies({ sky: state, latitude, width, horizon, top, sunSize, moonSize }: BodiesProps) {
+  function place(altitude: number, azimuth: number, size: number) {
+    const point = skyPoint(altitude, azimuth, latitude)
+    // Above the horizon, use the space up to `top`. Below it, sink quickly behind the hills.
+    const rise = altitude >= 0 ? point.y * (horizon - top) : altitude * (size / 6)
+    return { left: point.x * width - size / 2, top: horizon - rise - size / 2 }
+  }
+
+  return (
+    <>
+      {state.moon.altitude > -3 ? (
+        <View style={[styles.body, place(state.moon.altitude, state.moon.azimuth, moonSize)]}>
+          <Moon size={moonSize} fraction={state.moon.fraction} waxing={state.moon.waxing} />
+        </View>
+      ) : null}
+      {state.sun.altitude > -3 ? (
+        <View style={[styles.body, place(state.sun.altitude, state.sun.azimuth, sunSize)]}>
+          <Sun size={sunSize} color={state.sun.color} glow={state.sun.glow} />
+        </View>
+      ) : null}
+    </>
   )
 }
 
@@ -162,10 +231,7 @@ const styles = StyleSheet.create({
   glow: {
     position: "absolute",
   },
-  sun: {
-    backgroundColor: colors.dawn,
-  },
-  moon: {
-    backgroundColor: "#ECE9F7",
+  body: {
+    position: "absolute",
   },
 })
