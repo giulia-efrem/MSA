@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react"
 
 import { syncAlarms } from "./alarm-service"
+import { syncWakeUps } from "./api"
 import { loadAlarms, loadRecords, saveAlarms, saveRecords } from "./storage"
 import type { Alarm, WakeRecord } from "./types"
 
@@ -46,10 +47,12 @@ export function AlarmsProvider({ children }: { children: ReactNode }) {
     syncAlarms(alarms)
   }, [alarms, ready])
 
+  // Whenever wake-ups change: save them on the phone, then send them to the server.
   useEffect(() => {
     if (!ready) return
     saveRecords(records)
-  }, [records, ready])
+    syncWakeUps(records, alarms)
+  }, [records, alarms, ready])
 
   const value: AlarmsContextValue = {
     ready,

@@ -1,0 +1,3 @@
+node_modules/
+# .env holds your database password, so it must never go to GitHub
+.env

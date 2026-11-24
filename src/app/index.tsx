@@ -1,7 +1,7 @@
 import { Ionicons } from "@expo/vector-icons"
 import { router, useIsFocused } from "expo-router"
 import { Fragment, useEffect, useState } from "react"
-import { ScrollView, StyleSheet, Text, useWindowDimensions, View } from "react-native"
+import { Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from "react-native"
 import { SafeAreaView } from "react-native-safe-area-context"
 
 import { AlarmRow } from "@/components/alarm-row"
@@ -158,8 +158,14 @@ export default function HomeScreen() {
             </View>
           </View>
 
+          {/* Tap your streak to open "Your mornings", which shows the data from the server */}
           {records.length > 0 ? (
-            <View style={styles.streakRow}>
+            <Pressable
+              onPress={() => router.push("/stats")}
+              accessibilityRole="button"
+              accessibilityHint="Opens your mornings"
+              style={({ pressed }) => [styles.streakRow, pressed && styles.pressed]}
+            >
               <View style={styles.stat}>
                 <Ionicons name="flame" size={16} color={colors.dawn} />
                 <Text style={styles.statText}>
@@ -172,7 +178,13 @@ export default function HomeScreen() {
                   <Text style={styles.statText}>Sleep {sleepAverage}/10 lately</Text>
                 </View>
               ) : null}
-            </View>
+              <Ionicons
+                name="chevron-forward"
+                size={16}
+                color={colors.mist}
+                style={styles.streakArrow}
+              />
+            </Pressable>
           ) : null}
 
           {alarms.length === 0 ? (
@@ -326,9 +338,16 @@ const styles = StyleSheet.create({
   streakRow: {
     flexDirection: "row",
     flexWrap: "wrap",
+    alignItems: "center",
     gap: space.lg,
     paddingHorizontal: 6,
     marginTop: -space.sm,
+  },
+  pressed: {
+    opacity: 0.6,
+  },
+  streakArrow: {
+    marginLeft: "auto",
   },
   // Alarm list
   list: {
